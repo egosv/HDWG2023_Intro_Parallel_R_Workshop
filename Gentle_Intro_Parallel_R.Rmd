@@ -1,0 +1,1146 @@
+---
+title: "A gentle introduction to parallel computing in R"
+subtitle: ""  
+author: "Osvaldo Espin-Garcia"
+date: |
+  <center> Health Data Working Group Workshop </center>
+  <center> Nov 20, 2023 </center>
+output:
+  xaringan::moon_reader:
+    css: xaringan-themer.css
+    self_contained: true
+    nature:
+      slideNumberFormat: "%current%"
+      highlightStyle: github
+      highlightLines: true
+      ratio: 14:9
+      countIncrementalSlides: false
+      navigation:
+        scroll: false # false if wish to disable scrolling by mouse and use keyboard only
+---
+
+```{r setup, include=FALSE}
+# For dynamic editing xaringan::inf_mr()
+# Stop: servr::daemon_stop(2)
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(
+  fig.width=9, fig.height=6, fig.retina=3,
+  fig.retina = 3, fig.align = 'center',
+  #out.height = "100%",
+  cache = FALSE,
+  echo = TRUE,
+  message = FALSE, 
+  warning = FALSE,
+  hiline = TRUE
+)
+```
+
+```{r wrap-hook, include=FALSE}
+library(knitr)
+hook_output = knit_hooks$get('output')
+knit_hooks$set(output = function(x, options) {
+  # this hook is used only when the linewidth option is not NULL
+  if (!is.null(n <- options$linewidth)) {
+    x = xfun::split_lines(x)
+    # any lines wider than n should be wrapped
+    if (any(nchar(x) > n)) x = strwrap(x, width = n)
+    x = paste(x, collapse = '\n')
+  }
+  hook_output(x, options)
+})
+```
+
+```{r xaringan-themer, include=FALSE, warning=FALSE}
+library(xaringanthemer)
+background_css <- list(
+  ".title-slide" = list(
+    "background-image" = "url(img/WesternBackgroundTitle169.png)",
+    "background-position" = "bottom",
+    "background-size" = "contain"
+  ), 
+  ".small" = list(
+    "font-size" = "60%"
+  )
+)
+style_duo_accent(
+  extra_css = background_css,
+  primary_color = "#4F2683",
+  text_bold_color = "#807F83",
+  secondary_color = "#807F83",
+  inverse_header_color = "#807F83",
+  title_slide_background_color = "#FFFFFF",
+  title_slide_text_color = "#4F2683",
+  base_font_size = "18px",
+  text_font_size = "1.4rem",
+  # title_slide_background_image = "url(img/WesternBackgroundTitle169.png)",
+  # title_slide_background_position = "bottom",
+  # title_slide_background_size = "contain"
+)
+```
+
+```{css, echo=FALSE}
+/* custom.css following https://www.garrickadenbuie.com/blog/decouple-code-and-output-in-xaringan-slides/#using-knitr-fig-chunk 
+https://gist.github.com/gadenbuie/3869b688f5e50882e67b684a1e092937 */
+.left-code {
+  width: 38%;
+  height: 92%;
+  float: left;
+}
+.right-plot {
+  width: 60%;
+  float: right;
+  padding-left: 1%;
+}
+
+.pull-left1 {
+  width: 49%;
+  height: 92%;
+  float: left;
+}
+.pull-right1 {
+  width: 49%;
+  height: 92%;
+  float: right;
+  padding-left: 1.5%;
+}
+
+.left-code1 {
+  width: 62%;
+  height: 90%;
+  float: left;
+}
+.right-plot1 {
+  width: 37%;
+  float: right;
+  padding-left: 1%;
+}
+
+.plot-callout {
+  height: 225px;
+  width: 450px;
+  bottom: 5%;
+  right: 5%;
+  position: absolute;
+  padding: 0px;
+  z-index: 100;
+}
+.plot-callout img {
+  width: 100%;
+  border: 4px solid #23373B;
+}
+```
+
+# Materials
+
+<p style="margin-bottom:4.0cm"></p>
+
+Portions of this workshop were previously presented during the CSSC 2023 in Ottawa.
+--
+<p style="margin-bottom:1.0cm"></p>
+  
+Go to [https://github.com/egosv/HDWG2023_Intro_Parallel_R_Workshop](https://github.com/egosv/HDWG2023_Intro_Parallel_R_Workshop) in case you'd like to have a copy. 
+
+<p style="margin-bottom:1.0cm"></p>
+--
+(Or just Google "GitHub + egosv" and click on the corresponding repository)
+
+---
+
+# Packages used in this presentation
+
+<p style="margin-bottom:2.5cm"></p>
+
+```{r packs, eval=FALSE}
+## general utilities
+install.packages('gtools')
+
+## parallel computation
+install.packages(c('doParallel', 'snow', 'doSNOW', 'foreach', 'iterators'))
+
+## Monte Carlo simulation example
+install.packages(c('irtoys', 'mirt'))
+
+## Bayesian example
+install.packages("R2jags", "coda", "abind") # need to install JAGS first
+# (http://mcmc-jags.sourceforge.net)
+```
+
+---
+
+# Learning objectives
+
+<p style="margin-bottom:3cm"></p>
+
+1. Identify advantages and challenges of parallel computing in R.
+<p style="margin-bottom:1.5cm"></p>
+
+2. Learn about relevant R packages for parallel computing.
+<p style="margin-bottom:1.5cm"></p>
+
+3. Illustrate the scope, utility and capabilities of parallel computing in R.
+
+---
+
+# Background
+
+<p style="margin-bottom:2.5cm"></p>
+
+- Current (Nov, 2023) high-performance and parallel computing with R packages: 93 ([R task view ](https://CRAN.R-project.org/view=HighPerformanceComputing)). This list includes 2 "core" packages: _Rmpi_ and _snow_.
+<p style="margin-bottom:1.2cm"></p>
+--
+
+- Most recent computers come equipped with a fair amount of processing power, e.g., the most recent Apple M3 chips now come up to 16 CPU cores.
+<p style="margin-bottom:1.2cm"></p>
+--
+
+- Additionally, graphics processing units (GPUs) are increasingly available for neural network training and other [embarrassingly parallel](https://en.wikipedia.org/wiki/Embarrassingly_parallel) problems.
+
+---
+
+# Initial remarks
+
+<p style="margin-bottom:2.0cm"></p>
+
+- Computation has become increasingly inexpensive in the recent times.
+<p style="margin-bottom:1.0cm"></p>
+
+--
+- Scientific computing has benefited greatly from these advances and many routines and algorithms have incorporated parallelism.
+<p style="margin-bottom:1.0cm"></p>
+
+--
+- It is important to know when/where/if any of these routines are being used within a given R package.
+<p style="margin-bottom:1.0cm"></p>
+
+--
+- This talk will mainly focus on embarrassingly parallel problems.
+
+---
+
+# Shared vs. distributed memory
+
+<p style="margin-bottom:2.5cm"></p>
+
+```{r, echo = FALSE, out.height="85%",out.width="75%"}
+knitr::include_graphics("img/Memory-Organization-a-Shared-Memory-b-Distributed-Memory.png")
+```
+
+---
+
+
+# Out-of-the-box implementations
+
+Since R v2.14.0, the package `parallel` is part of the base R distribution.
+
+--
+
+`parallel` comes with parallel versions of the family of *apply functions, e.g., apply, lapply, sapply.
+
+--
+
+Example code:
+```{r, eval=FALSE, error=FALSE, results='hide'}
+library(parallel)
+n <- 10; sd <- 2
+# calculate the number of cores
+num_cores <- detectCores() - 1
+# initiate cluster
+cl <- makeCluster(num_cores)
+# run
+parLapply(cl, 2:4, function(mean) rnorm(n,mean,sd))
+# stop cluster
+stopCluster(cl)
+```
+
+--
+**Try the code above in your computers... **
+
+--
+**What happened?**
+
+---
+
+# Initializing the cores
+
+When using the `parallel` package, required information (`n` and `sd`) needs to be passed to all the cores prior to execution.
+
+--
+
+This is achieved as follows:
+```{r, eval=FALSE, error=FALSE}
+library(parallel)
+n <- 10; sd <- 2
+# initiate cluster
+cl <- makeCluster(num_cores)
+{{clusterExport(cl, c("n","sd"))}}
+# run
+parLapply(cl, 2:4, function(mean)rnorm(n,mean,sd))
+# stop cluster
+stopCluster(cl)
+```
+
+--
+In addition of `clusterExport`, `parallel` has additional functions to initialize variables, functions or packages in remote clusters, type `?clusterExport` for more details.
+
+---
+
+
+# Always faster? 
+
+Despite what one may think, parallel computing is not always faster, why?
+
+--
+<p style="margin-bottom:0.7cm"></p>
+
+The reason is **overhead**.
+
+--
+
+- This is because by using multiple cores one needs to initialize and pass information among them.
+<p style="margin-bottom:0.7cm"></p>
+--
+
+- This preparation/communication adds some computational burden. 
+<p style="margin-bottom:0.7cm"></p>
+--
+
+- Consequently, the performance increase is highly dependent on the type of application.
+<p style="margin-bottom:0.7cm"></p>
+--
+
+- Typically, fast computations with efficient use of processing power won't benefit as much as more time-consuming applications.
+
+---
+
+# Random number generation
+
+In many instances, we are interested in making our results reproducible, which is usually achieved in the sequential setting by setting up a *seed*.
+
+--
+
+The specific way of setting a seed in parallel implementations is:
+```{r, eval=TRUE}
+library(parallel)
+cl <- makeCluster(5)
+
+clusterSetRNGStream(cl, rep(403,6) )
+res1 <- parLapplyLB(cl,rep(100,3),function(n){
+  rnorm(n,mean=1,sd=2)})
+
+clusterSetRNGStream(cl, rep(403,6) )
+res2 <- parLapplyLB(cl,rep(100,3),function(n){
+  rnorm(n,mean=1,sd=2)})
+
+stopCluster(cl)
+all.equal(res1,res2)
+```
+
+---
+
+
+# A limitation 
+
+<p style="margin-bottom:2.5cm"></p>
+
+- The `parallel` package was designed for usage in shared memory architectures.
+<p style="margin-bottom:0.7cm"></p>
+--
+
+- For distributed memory architectures, package `snow` provides a robust alternative.
+<p style="margin-bottom:0.7cm"></p>
+--
+
+- Interestingly, `snow` works well for either architecture, thus, it is a good idea to stick with it.
+
+---
+
+# `foreach`
+
+<p style="margin-bottom:2.5cm"></p>
+
+- Using the `parallel` package alone can be burdensome
+  - a lot of housekeeping needs to be done,
+  - i.e., one must keep track of all variables/packages/functions that need to be passed to remote cores.
+
+<p style="margin-bottom:1.2cm"></p>
+
+--
+
+- Luckily, package `foreach` greatly helps to overcome this.
+
+---
+
+# Basic call to `foreach`
+
+<p style="margin-bottom:1.7cm"></p>
+
+```{r, eval=FALSE}
+library(parallel)
+library(doParallel)
+library(foreach)
+
+cl <- makeCluster(num_cores)
+
+registerDoParallel(cl)
+
+res <- foreach(..., # controls the "loop" 
+        .combine, # how the results are put together 
+        # (usually equals c, rbind, cbind)
+        .inorder = TRUE,
+        .errorhandling = c('stop', 'remove', 'pass'),
+        .packages = NULL, 
+        .export = NULL, 
+        .noexport = NULL,
+        .verbose = FALSE) %dopar%{ # can be changed to %do% to run sequantially
+         
+        # do something for a given iteration of the "loop" #
+         
+         }
+stopCluster(cl)
+```
+
+---
+
+# Appeal of `foreach`
+
+<p style="margin-bottom:2.5cm"></p>
+
+- Loop-like interface. 
+<p style="margin-bottom:1.5cm"></p>
+--
+
+- Seamless passing of needed variables, dataframes, functions.
+<p style="margin-bottom:1.5cm"></p>
+--
+
+- One needs to explicitly request packages, however.
+<p style="margin-bottom:1.5cm"></p>
+--
+
+- Flexibility in the way results can be combined/retrieved.
+
+---
+
+# Example: Cross-validation in parallel
+```{r}
+set.seed(12397)
+n <- 10000 # sample size
+
+X <- cbind( x1 = rnorm(n),  # design matrix
+            x2 = rbinom(n = n, size = 1, prob=0.4), 
+            x3 = runif(n))
+X <- model.matrix( ~.^2, data=data.frame(X))
+
+Beta <- rep(0, ncol(X)-1)  
+Beta[c(1,2,4)] <- rnorm(3) 
+Beta <- c(1, Beta) # true values
+
+mu <- as.numeric(gtools::inv.logit(X %*% Beta)) # compute response
+Y <- rbinom(n = n, size = 1, prob = mu)
+
+data.cv <- data.frame(y=Y,X) # put data together
+
+cvfolds <- 5 # number of folds
+
+data.cv$fold <- cut(sample(nrow(data.cv)), # divide data in equally-sized folds
+                    breaks=cvfolds,labels=FALSE)
+```
+
+---
+
+# Cross-validation in parallel (cont'd)
+.pull-left[
+```{r upload dat, paged.print=FALSE, eval=FALSE}
+library(snow)
+library(doSNOW)
+
+num_cores <- 5
+cl <- makeCluster(num_cores)
+registerDoSNOW(cl)
+
+res.cv <- foreach(foldi = 1:cvfolds, 
+                  .combine = 'c', 
+                  .verbose = TRUE) %dopar% {
+    
+    foldindx = data.cv$fold == foldi
+    
+    fit = glm(y ~ .-fold, 
+              data = data.cv[!foldindx,], 
+              family = binomial)
+   
+     data.cv.foldi = data.cv[foldindx,]
+    pred = predict(fit, data.cv.foldi)
+    resi = mean((data.cv.foldi$y-pred)^2)
+    return(resi)
+}
+stopCluster(cl)
+```
+] 
+
+--
+
+.pull-right[
+
+Because `.verbose = TRUE`
+```{r upload dat-out, linewidth=50, ref.label="upload dat", echo=FALSE, message=FALSE}
+```
+
+]
+
+---
+
+# Cross-validation in parallel (cont'd)
+
+<p style="margin-bottom:2.5cm"></p>
+
+What does the previous code return?
+
+--
+
+```{r,eval=TRUE}
+round(res.cv, digits = 3)
+```
+
+
+---
+
+
+# One practical recommendation
+
+<p style="margin-bottom:2.5cm"></p>
+
+Suppose you have a dataframe (or a vector) called "`mydata`" 
+  - this object can be somehow indexed (or split) by variable called `indx`
+  - this index can represent things like a replicate, a centre, etc.
+
+<p style="margin-bottom:1.2cm"></p>
+--
+
+Similar to the cross validation example above, but with a couple differences:
+  - "`mydata`" can get really large.
+  - we are only interested in processing the split version of `mydata`"
+  
+---
+
+# A not-so-great idea
+
+<p style="margin-bottom:2.5cm"></p>
+
+Can you say why?
+```{r, eval=FALSE}
+library(parallel)
+library(doParallel)
+
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+res <- foreach(indxi = 1:nindx, 
+               .combine = 'c', .verbose=TRUE) %dopar% {
+         
+        datai = mydata[mydata$indx==indxi,]
+        
+        # ... do something with datai only... #
+         
+       }
+stopCluster(cl)
+```
+
+---
+
+# A better idea
+
+<p style="margin-bottom:2.5cm"></p>
+
+Why?
+```{r, eval=FALSE}
+library(parallel)
+library(doParallel)
+library(iterators)
+
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+res <- foreach(datai = isplit(mydata, list(indxi=mydata$indx)), 
+        .combine = 'c', .verbose=TRUE) %dopar% {
+         
+        # ... do something with datai only... #
+         
+       }
+stopCluster(cl)
+```
+<!-- Above, we have taken advange of the function `isplit` in package `iterators`, which I'm going to introduce in more detail. -->
+
+---
+
+
+# `iterators`
+
+<p style="margin-bottom:2.5cm"></p>
+
+In many cases, it's better to pass only the portion of the data we are dealing with for a given iteration/core.
+
+<p style="margin-bottom:1.2cm"></p>
+--
+
+The `iterators` package helps us to achieve this. 
+  - different types of *iterator functions* available.
+
+---
+
+# `icount`
+
+<p style="margin-bottom:2.5cm"></p>
+
+Performs a sequential count.
+```{r,eval=TRUE}
+cl <- makeCluster(num_cores)
+
+registerDoSNOW(cl)
+clusterSetRNGStream(cl, rep(4039,6) )
+
+res.icount <- foreach(indxi = icount(10),
+          .combine='rbind', 
+          .verbose=FALSE) %dopar% {
+            
+            resi = summary(rnorm(n = 10000, mean = indxi))
+            
+            return(resi)
+          }
+
+stopCluster(cl)
+```
+
+---
+
+# `icount` (cont'd)
+```{r,eval=TRUE}
+round(res.icount, digits = 3)
+```
+Note that if this iterator is run without an argument, i.e. `icount()`, it will keep counting indefinitely. 
+
+---
+
+# `iter`
+This function iterates over a variety of objects, more commonly matrices or dataframes. 
+In particular, it allows to iterate over columns, rows or individual cells.
+```{r,eval=TRUE}
+iters.df <- expand.grid(mean = 0:2, sd = 3:5) 
+                        
+cl <- makeCluster(num_cores)
+registerDoSNOW(cl)
+clusterSetRNGStream(cl, rep(4039,6) )
+
+res.iter <- foreach(iter = iter(iters.df, by='row'),
+               .combine='rbind', 
+               .verbose=FALSE) %dopar% 
+  {
+    mean.iter = iter$mean
+    sd.iter = iter$sd
+    
+    x = rnorm(10000, mean=mean.iter, sd=sd.iter)
+    
+    return( c(summary(x), SD=sd(x)) )
+  }
+stopCluster(cl)
+```
+
+---
+
+# `iter` (cont'd)
+
+<p style="margin-bottom:2.5cm"></p>
+
+```{r,eval=TRUE}
+round(res.iter, digits = 3)
+```
+
+---
+
+
+# `isplit`
+This iterator allows to divide a given vector or dataframe into groups according to a factor or list of factors.
+
+```{r,eval=TRUE}
+x <- rnorm(2000)
+f <- factor(sample(1:10, length(x), replace=TRUE))
+
+cl <- makeCluster(num_cores)
+registerDoSNOW(cl)
+
+res.isplit <- foreach(iter = isplit(x, list(f=f)), 
+               .combine='rbind', 
+               .verbose=FALSE) %dopar% 
+  {
+  factoriter <- iter$key$f
+  xiter <- iter$value
+
+  resi = c(f = as.numeric(factoriter),
+           summary(xiter), 
+           SD=sd(xiter))
+  
+  return(resi)    
+}
+stopCluster(cl)
+```
+
+---
+
+# `isplit` (cont'd)
+
+<p style="margin-bottom:2.5cm"></p>
+
+```{r,eval=TRUE}
+round(res.isplit, digits = 3)
+```
+
+---
+
+# Example: Monte Carlo simulation
+
+<p style="margin-bottom:2.5cm"></p>
+
+- A Monte Carlo simulation is typically performed to understand the behaviour/performance of statistical methods.
+<p style="margin-bottom:1.2cm"></p>
+
+--
+- This type of study is, once again, very easy to parallelize as each iteration is commonly independent from one another.
+<p style="margin-bottom:1.2cm"></p>
+
+--
+- Okan Bulut from University of Alberta provides [a great resource](https://okanbulut.github.io/simulations_in_r/) on the topic. 
+
+---
+
+
+# Monte Carlo simulation (cont'd)
+
+.pull-left[
+```{r MCsim1, paged.print=FALSE, eval=FALSE}
+library(foreach); library(doSNOW)
+
+cl <- makeCluster(7); registerDoSNOW(cl)
+
+iterations = 21
+seeds = sample.int(10000, 100)
+source("MCsim_auxiliaryfunctions.R")
+
+system.time(
+  simresults <- foreach(i=1:iterations, 
+      .packages = c("mirt", "irtoys"),
+      .combine = rbind) %do% { #<<
+  # Generate item parameters and data
+  step1 <- generate_data(nitem = 10, 
+            nexaminee = 1000, seed=seeds[i])
+  # Estimate item parameters
+  step2 <- estimate_par(step1$respdata, 
+                        guess = -1)
+  # Summarize results and return them
+  return(summarize(step2, step1$itempar))
+})
+
+stopCluster(cl)
+```
+] 
+
+--
+
+.pull-right[
+```{r MCsim2, paged.print=FALSE, eval=FALSE}
+library(foreach); library(doSNOW)
+
+cl <- makeCluster(7); registerDoSNOW(cl)
+
+iterations = 21
+seeds = sample.int(10000, 100)
+source("MCsim_auxiliaryfunctions.R")
+
+system.time(
+  simresults <- foreach(i=1:iterations, 
+      .packages = c("mirt", "irtoys"),
+      .combine = rbind) %dopar% { #<<
+  # Generate item parameters and data
+  step1 <- generate_data(nitem = 10, 
+            nexaminee = 1000, seed=seeds[i])
+  # Estimate item parameters
+  step2 <- estimate_par(step1$respdata, 
+                        guess = -1)
+  # Summarize results and return them
+  return(summarize(step2, step1$itempar))
+})
+
+stopCluster(cl)
+```
+]
+
+
+---
+
+# Monte Carlo simulation (cont'd)
+
+Timings:
+
+.pull-left[
+
+Sequential
+```{r MCsim1 out, linewidth=50, ref.label="MCsim1", echo=FALSE, message=FALSE}
+```
+
+]
+
+.pull-right[
+Parallel
+```{r MCsim2, linewidth=50, ref.label="MCsim2", echo=FALSE, message=FALSE}
+```
+]
+
+---
+
+# Example: Permutation test
+
+<p style="margin-bottom:2.5cm"></p>
+
+- Also called (re-)randomization test or shuffle test, 
+it is an exact statistical hypothesis test that makes use of the proof by contradiction, i.e., is there contradiction between $H_0$ and the observed data?
+<p style="margin-bottom:1.2cm"></p>
+
+--
+- A permutation test is, at its core, a form of resampling. Often, this procedure is used to compute the (unknown) sampling distribution of the test statistic when the null hypothesis is true.
+<p style="margin-bottom:1.2cm"></p>
+
+--
+- A good resource by Ken Rice and Thomas Lumley on permutation tests can be found [here](https://faculty.washington.edu/kenrice/sisg/SISG-08-06.pdf). 
+
+---
+
+# Permutation test (cont'd)
+
+We first generate some data.
+
+--
+```{r}
+set.seed(12397)
+
+n <- 10 # per group sample size
+sA <- rgamma(n, shape = 1, rate = 1)
+sB <- rgamma(n, shape = 4, rate = 1)
+
+## Additional values
+Allsamples <- c(sA, sB)
+R <- choose(n*2, n) # Total number of group assignments
+index <- combn(n*2, n) # Generate N group assignments
+
+# Observed mean difference
+Obs <- mean(sA)-mean(sB)
+```
+
+Let's say we want to test whether the _means_ of the two samples above are different.
+
+---
+
+# Permutation test (cont'd)
+
+.pull-left[
+```{r PT1, paged.print=FALSE, eval=FALSE}
+library(foreach); library(doSNOW)
+
+cl <- makeCluster(7); registerDoSNOW(cl)
+
+system.time(
+  Pres <- foreach( 
+   indx = iter(index, by='col'), 
+   .combine = "c") %do% { #<<
+  # Permute the groups
+  sApi <- Allsamples[indx]
+  sBpi <- Allsamples[-indx]
+  # Compute difference in permuted groups
+  resi <- mean(sApi)-mean(sBpi)
+  # Return the result
+  return(resi)
+})
+
+tbar <- mean(Pres)
+# Two-sided permutation p-value
+sum(abs(Pres-tbar)>=abs(Obs-tbar))/R
+
+stopCluster(cl)
+```
+] 
+
+--
+
+.pull-right[
+```{r PT2, paged.print=FALSE, eval=FALSE}
+library(foreach); library(doSNOW)
+
+cl <- makeCluster(7); registerDoSNOW(cl)
+
+system.time(
+  Permres <- foreach( 
+    indx = iter(index, by='col'), 
+    .combine = 'c') %dopar% { #<<
+  # Permute the groups
+  sApi <- Allsamples[indx]
+  sBpi <- Allsamples[-indx]
+  # Compute difference in permuted groups
+  resi <- mean(sApi)-mean(sBpi)
+  # Return the result
+  return(resi)
+})
+
+tbar <- mean(Permres)
+# Two-sided permutation p-value
+sum(abs(Pres-tbar)>=abs(Obs-tbar))/R
+
+stopCluster(cl)
+```
+]
+
+
+---
+
+# Permutation test (cont'd)
+
+Timings:
+
+
+.pull-left[
+
+Sequential
+```{r PT1 out, linewidth=50, ref.label="PT1", echo=FALSE, message=FALSE, cache=TRUE}
+```
+
+]
+
+.pull-right[
+Parallel
+```{r PT2 out, linewidth=50, ref.label="PT2", echo=FALSE, message=FALSE, cache=TRUE}
+```
+]
+
+<p style="margin-bottom:2.5cm"></p>
+
+--
+
+What happened?
+
+
+---
+
+# Permutation test (cont'd)
+<p style="margin-bottom:1.0cm"></p>
+
+```{r, echo=FALSE}
+hist(Permres, xlab="ybarA-ybarB",
+     main="Permutation distribution of difference in means")
+abline(v=Obs,col="blue", lwd=2) #add line at obs.
+```
+
+---
+
+# Permutation test with a tweak
+
+.pull-left[
+```{r PT1b, paged.print=FALSE, eval=FALSE}
+library(foreach); library(doSNOW)
+
+cl <- makeCluster(7); registerDoSNOW(cl)
+
+system.time(
+  Pres <- foreach( 
+   indx = iter(index, by='col'), 
+   .combine = "c") %dopar% { 
+  # Permute the groups
+  sApi <- Allsamples[indx]
+  sBpi <- Allsamples[-indx]
+  # Compute difference in permuted groups
+  resi <- mean(sApi)-mean(sBpi)
+  # Return the result
+  return(resi)
+})
+
+tbar <- mean(Pres)
+# Two-sided permutation p-value
+sum(abs(Pres-tbar)>=abs(Obs-tbar))/R
+
+stopCluster(cl)
+```
+] 
+
+--
+
+.pull-right[
+```{r PT2b, paged.print=FALSE, eval=FALSE}
+library(foreach); library(doSNOW)
+
+cl <- makeCluster(7); registerDoSNOW(cl)
+
+system.time(
+  Permres <- foreach( 
+    indx = iter(index, by='col'), 
+    .inorder = FALSE, #<<
+    .combine = 'c') %dopar% { 
+  # Permute the groups
+  sApi <- Allsamples[indx]
+  sBpi <- Allsamples[-indx]
+  # Compute difference in permuted groups
+  resi <- mean(sApi)-mean(sBpi)
+  # Return the result
+  return(resi)
+} )
+
+tbar <- mean(Permres)
+# Two-sided permutation p-value
+sum(abs(Pres-tbar)>=abs(Obs-tbar))/R
+
+stopCluster(cl)
+```
+]
+
+---
+
+# Permutation test with a tweak (cont'd)
+
+Timings:
+
+
+.pull-left[
+Parallel 
+```{r PT1b out, linewidth=50, ref.label="PT1b", echo=FALSE, message=FALSE, cache=TRUE}
+```
+
+]
+
+.pull-right[
+Parallel (with a tweak)
+```{r PT2b out, linewidth=50, ref.label="PT2b", echo=FALSE, message=FALSE, cache=TRUE}
+```
+]
+
+<p style="margin-bottom:2.5cm"></p>
+
+--
+
+But still not faster than the sequential version in this case.
+
+---
+
+# Example: MCMC with parallel chains
+
+<p style="margin-bottom:1.5cm"></p>
+
+- The Bayesian paradigm offers a probabilistic way of performing inference on unknown parameters. This is achieved by means of the Bayes theorem, and relies on prior information on the parameters and a likelihood function to obtain a posterior distribution.  
+<p style="margin-bottom:1.2cm"></p>
+
+--
+- Computing posterior distributions can be challenging. Luckily sampling approaches like Markov Chain Monte Carlo (MCMC) can greatly help. However, these can be computationally demanding.   
+<p style="margin-bottom:1.2cm"></p>
+
+--
+- Kuan Liu at UofT has an amazing bookdown [on Applied Bayesian Methods](https://kuan-liu.github.io/bayes_bookdown/). 
+
+---
+
+
+# MCMC with parallel chains (cont'd)
+<p style="margin-bottom:-1.5cm"></p>
+
+.pull-left1[
+```{r MCMCsim1, paged.print=FALSE, eval=FALSE}
+library(foreach); library(doSNOW)
+cl <- makeCluster(7); registerDoSNOW(cl)
+set.seed(1579)
+packlist = c("R2jags", "coda", "abind")
+niter = 28; nchns = 3
+seeds = sample.int(100000, niter)
+source("MCMCsim_auxiliaryfunctions.R")
+
+system.time(
+simres <- foreach(i=1:niter, 
+      .packages = packlist,
+      .combine = rbind) %do% { #<<
+  # Define seeds for each step
+  seeddta <- seeds[i]
+  seedest <- seeddta + 10*i
+  # Generate data
+  step1 <- gen_data(seed = seeddta)
+  # Estimate posterior distributions
+  step2 <- est_post(step1$data, nchns, 
+                    seedest)
+  # Summarize results and return them
+  return(summ_pars(i, step2$postmeans, 
+                   step1$parms)) } )
+stopCluster(cl)
+```
+]
+
+--
+
+.pull-right1[
+```{r MCMCsim2, eval=FALSE}
+cl <- makeCluster(7); registerDoSNOW(cl)
+system.time({
+simres0 <- foreach(i0=1:(niter*nchns), 
+    .packages = packlist, .inorder = F,
+    .combine = c) %dopar% { #<<
+  idx <- i0%%niter + 1 # Number b/t 1:niter
+  seeddta=seeds[idx]; seedest=seeddta+10*i0
+  step1 <- gen_data(seed = seeddta)
+  step2 <- est_post(step1$data, 1, seedest)
+  # Return individual chain results
+  return(list(list(idx=idx, pars=step1$parms,
+                    jagsfit=step2$jags.fit)))}
+idxgps = sapply(simres0, function(s)s[[1]])
+simres <- foreach(i=1:niter, 
+  .packages = packlist, 
+  .combine = rbind) %dopar% { #<<
+  # Identify indices        
+  resi <- simres0[which(idxgps==i)]
+  n.chains0 <- sum(idxgps==i)
+  # Combine chains and estimate post. means
+  step2a <- combine_chains(resi, n.chains0)
+  return(summ_pars(i, step2a$postmeans, 
+                    resi[[1]]$pars) )} })
+stopCluster(cl)
+```
+]
+
+
+---
+
+# MCMC with parallel chains (cont'd)
+
+Timings:
+
+.pull-left[
+Sequential
+```{r MCMCsim1 out, linewidth=50, ref.label="MCMCsim1", echo=FALSE, message=FALSE}
+```
+]
+
+.pull-right[
+Parallel
+```{r MCMCsim2 out, linewidth=50, ref.label="MCMCsim2", echo=FALSE, message=FALSE}
+```
+]
+
+---
+
+# Additional resources
+
+<p style="margin-bottom:3.5cm"></p>
+
+- [Intro to parallel computing in R](https://nceas.github.io/oss-lessons/parallel-computing-in-r/parallel-computing-in-r.html)
+<p style="margin-bottom:1.5cm"></p>
+
+- [`foreach` vignette](https://cran.r-project.org/web/packages/foreach/vignettes/foreach.html)
+<p style="margin-bottom:1.5cm"></p>
+
+- [A guide to parallelism in R](https://privefl.github.io/blog/a-guide-to-parallelism-in-r/)
+
+
+---
+
+class: center, middle
+
+# Thank you for your attention!
+
